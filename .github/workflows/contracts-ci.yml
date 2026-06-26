@@ -51,5 +51,53 @@ jobs:
       - name: cargo test -p token_transfer
         run: cargo test -p token_transfer
 
+      - name: Soroban test-snapshot hygiene check (fail on host-error snapshots)
+        shell: bash
+        env:
+          # Add allowlisted snapshot filenames/paths here, relative to repo root.
+          # Example:
+          #   ALLOWLIST: "contracts/token_transfer/test_snapshots/legit.json,contracts/group_treasury/test_snapshots/another.json"
+          ALLOWLIST: ""
+        run: |
+          set -euo pipefail
+          echo "Scanning for test_snapshots JSON files..."
+
+          # Find any JSON files under contracts/**/test_snapshots/
+          mapfile -t found < <(find . -type f -path '*/test_snapshots/*.json' -print)
+
+          if [ "${#found[@]}" -eq 0 ]; then
+            echo "No test snapshots produced."
+            exit 0
+          fi
+
+          # Normalize allowlist into an array and filter.
+          IFS=',' read -r -a allowlist <<< "${ALLOWLIST}"
+          filtered=()
+
+          for f in "${found[@]}"; do
+            # Convert to repo-root-relative path for comparison.
+            rel="${f#./}"
+
+            allowed=false
+            for a in "${allowlist[@]}"; do
+              if [ -n "$a" ] && [ "$rel" = "$a" ]; then
+                allowed=true
+                break
+              fi
+            done
+            if [ "$allowed" = false ]; then
+              filtered+=("$rel")
+            fi
+          done
+
+          if [ "${#filtered[@]}" -ne 0 ]; then
+            echo "ERROR: Found test snapshot files that are not allowlisted (host errors suspected):"
+            printf ' - %s\n' "${filtered[@]}"
+            exit 1
+          fi
+
+          echo "Only allowlisted test snapshots were produced."
+
       - name: cargo build (release wasm32)
         run: cargo build -p token_transfer --target wasm32-unknown-unknown --release
+
